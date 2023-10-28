@@ -99,7 +99,7 @@ try:
 
     # Define the time range for the past 3 months
     end_time = datetime.now()
-    start_time = end_time - timedelta(days=90)  # Adjust as necessary
+    start_time = end_time - timedelta(days=150)  # Adjust as necessary
 
 
 
