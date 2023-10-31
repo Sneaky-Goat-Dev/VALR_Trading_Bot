@@ -7,7 +7,7 @@ from decouple import config
 
 class TradingEnv(gym.Env):
     
-    def __init__(self, time_penalty=-0.01):
+    def __init__(self, time_penalty=-0.01, max_steps=10, time_threshold=10):
         super(TradingEnv, self).__init__()
 
         self.columns_to_keep = [
@@ -18,13 +18,13 @@ class TradingEnv(gym.Env):
             'rsi', 'macd', 'market_trend'
         ]
         
-        self.max_steps = 10
+        self.max_steps = max_steps
         self.current_step = 0
         self.btc_balance = 0.0
         self.zar_balance = 2000.0
         self.total_profit = 0.0
         self.time_penalty = time_penalty
-        self.time_threshold = 10  # The maximum number of steps a trade can be open without penalty
+        self.time_threshold = time_threshold  # The maximum number of steps a trade can be open without penalty
         self.open_orders = []
         
         self.action_space = spaces.Discrete(3)  # 0: Hold, 1: Open Long, 2: Close Long
@@ -63,25 +63,20 @@ class TradingEnv(gym.Env):
     
     def calculate_reward(self, trade_profit_loss, existing_reward=0.0):
         reward = existing_reward
-        # Reward based on profit or loss from closing a trade
-        reward += trade_profit_loss
-        
-        # Time penalty for trades exceeding threshold time
-        # for order in self.open_orders:
-        #     if order['time_open'] > self.time_threshold:
-        #         reward += self.time_penalty
-        
-        # Optional: additional rewards or penalties can be added here
-        
-        # Normalize reward (if needed)
-        # reward = some_normalization_function(reward)
-        
+        multiplier = 2 if trade_profit_loss > 0 else 1  # Default value
+        if trade_profit_loss > 0:
+            if trade_profit_loss >= 5.0:  # If the profit is 5% or more
+                multiplier = 4  # Increase the multiplier
+            reward += trade_profit_loss * multiplier
+        else:
+            reward += trade_profit_loss  # No multiplier for loss
         return reward
 
     def step(self, action):
         self.current_step += 1
         current_data = self.data.iloc[self.current_step]
         current_close_price = current_data['closing_price']
+        current_market_trend = current_data['market_trend']  # Get the market_trend value from the current data
 
         # Initialize reward and trade_profit_loss
         reward = 0.0
@@ -96,9 +91,14 @@ class TradingEnv(gym.Env):
                 if order['time_open'] > self.time_threshold:
                     # print('Time penalty applied.')
                     reward += self.time_penalty  # Apply time penalty
+            # Check for 5% profit to close the trade immediately
+            if self.should_take_profit(order, current_close_price):
+                # print("5% profit reached. Closing trade.")
+                trade_profit_loss += self.close_long(order, current_close_price)
 
         if action == 0:  # Hold
-            pass
+            if current_market_trend == 1:  # If it's an uptrend
+                reward += 0.1  # Reward for holding during an uptrend
         elif action == 1:  # Open Long
             self.open_long(current_close_price)
         elif action == 2:  # Close Long
@@ -117,26 +117,38 @@ class TradingEnv(gym.Env):
             done = True
 
         # Additional info, can be empty
-        info = {}
+        info = {"closing": current_close_price}
 
         return new_obs, reward, done, info
 
     def open_long(self, current_close_price):
         current_close_price = float(current_close_price)  # Convert to float
         amount_to_buy = (self.zar_balance / 100) / current_close_price
+        # Check if there are enough ZAR funds to open the long order
+        if amount_to_buy * current_close_price > self.zar_balance:
+            print("Not enough ZAR to open long order.")
+            return  # exit the function
+        
         self.btc_balance += amount_to_buy
         self.zar_balance -= self.zar_balance / 100
         stop_loss = current_close_price * 0.95  # 5% stop-loss
+        total_asset_at_order_time = self.total_asset_in_zar()
         self.open_orders.append({
             'type': 'long',
             'close_price': current_close_price,
             'amount': amount_to_buy,
             'stop_loss': stop_loss,
-            'time_open': 0
+            'time_open': 0,
+            'total_asset_at_order_time': total_asset_at_order_time  # New key-value pair
         })
 
     def close_long(self, order, current_close_price):
         current_close_price = float(current_close_price)  # Convert to float
+        # Check if there are enough BTC to close the long order
+        if order['amount'] > self.btc_balance:
+            # print("Not enough BTC to close long order.")
+            return 0  # return 0 as there's no profit or loss
+        
         sell_price = order['amount'] * current_close_price
         bought_at = order['amount'] * order['close_price']
         profit = sell_price - bought_at
@@ -145,6 +157,17 @@ class TradingEnv(gym.Env):
         self.btc_balance -= order['amount']
         self.open_orders.remove(order)
         return profit
+    
+    
+    def should_take_profit(self, order, current_close_price):
+        current_close_price = float(current_close_price)
+        sell_price = order['amount'] * current_close_price
+        bought_at = order['amount'] * order['close_price']
+        profit = sell_price - bought_at
+        profit_percent = (profit / order['total_asset_at_order_time']) * 100  # Calculate profit percentage
+
+        return profit_percent >= 5.0
+
 
     
     def total_asset_in_zar(self):
