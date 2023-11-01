@@ -1,9 +1,21 @@
 import argparse
 import optuna
-from trading_env_revised import TradingEnv
+from optuna.pruners import MedianPruner
+from trading_env_btc import TradingEnv
 from stable_baselines3 import PPO
 import json
 import matplotlib.pyplot as plt
+from joblib import parallel_backend
+
+def plot_rewards(rewards, total_steps):
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(total_steps), rewards, label='Rewards per Step')
+    plt.xlabel('Step')
+    plt.ylabel('Reward')
+    plt.title('Rewards over Time')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 def save_best_model(model, params, total_rewards, best_rewards, model_path="best_trader", params_path="best_params.json"):
     if total_rewards > best_rewards:
@@ -23,7 +35,6 @@ def train_model(env, learning_rate, batch_size, n_steps, gamma, gae_lambda):
     model.learn(total_timesteps=20000)
     return model
 
-
 def load_best_params(params_path="best_params.json"):
     with open(params_path, "r") as f:
         params = json.load(f)
@@ -32,34 +43,17 @@ def load_best_params(params_path="best_params.json"):
 def evaluate_model(model, env):
     total_rewards = 0
     total_steps = 1000
-    rewards = []
     obs = env.reset()
     
     for i in range(total_steps):
         action, _states = model.predict(obs, deterministic=True)
         obs, reward, done, info = env.step(action)
         total_rewards += reward
-        rewards.append(reward)
-        print(f'Total Reward: {total_rewards}')
-        print(f'Reward: {reward}')
         env.render()
         if done:
             obs = env.reset()
     
-    # plot_rewards(rewards, total_steps)
-    
     return total_rewards
-
-
-def plot_rewards(rewards, total_steps):
-    plt.figure(figsize=(10, 5))
-    plt.plot(range(total_steps), rewards, label='Rewards per Step')
-    plt.xlabel('Step')
-    plt.ylabel('Reward')
-    plt.title('Rewards over Time')
-    plt.legend()
-    plt.grid(True)
-    plt.show()
 
 def objective(trial):
     # Hyperparameters for the trading environment
@@ -67,53 +61,59 @@ def objective(trial):
     max_steps = trial.suggest_int('max_steps', 10, 100)
     time_threshold = trial.suggest_int('time_threshold', 5, 20)
 
+    # New hyperparameters to be tuned
+    ALPHA = trial.suggest_float('ALPHA', 0.1, 1.0)
+    BETA = trial.suggest_float('BETA', 0.01, 0.2)
+    GAMMA = trial.suggest_float('GAMMA', 0.1, 1.0)
+    DELTA = trial.suggest_float('DELTA', 0.1, 1.0)
+    EPSILON = trial.suggest_float('EPSILON', 0.01, 0.1)
+    ZETA = trial.suggest_float('ZETA', 0.1, 1.0)
+
     # Hyperparameters for the PPO model
     learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128, 256, 512, 223])  # Add 223 to the list
+    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128, 256, 512, 223])
     n_steps = trial.suggest_int('n_steps', 128, 2048)
-
-    # Ensure n_steps is divisible by batch_size
-    n_steps = (n_steps // batch_size) * batch_size
     gamma = trial.suggest_float('gamma', 0.9, 0.9999)
     gae_lambda = trial.suggest_float('gae_lambda', 0.8, 1.0)
     
-    env = TradingEnv(time_penalty=time_penalty, max_steps=max_steps, time_threshold=time_threshold)
+    env = TradingEnv(time_penalty=time_penalty, max_steps=max_steps, time_threshold=time_threshold,
+                     ALPHA=ALPHA, BETA=BETA, GAMMA=GAMMA, DELTA=DELTA, EPSILON=EPSILON, ZETA=ZETA)
     
-    model = PPO("MlpPolicy", env, verbose=1, 
-                learning_rate=learning_rate, 
-                batch_size=batch_size,
-                n_steps=n_steps,
-                gamma=gamma,
-                gae_lambda=gae_lambda)
-    
-    model.learn(total_timesteps=20000)
+    model = train_model(env, learning_rate, batch_size, n_steps, gamma, gae_lambda)
     return evaluate_model(model, env)
-
-
 
 def main(mode):
     if mode == "train":
-        best_reward = float('-inf')  # Initialize with negative infinity
+        best_reward = float('-inf')
 
         def callback(study, trial):
             nonlocal best_reward
             if study.best_value > best_reward:
                 env = TradingEnv(time_penalty=study.best_params['time_penalty'],
-                                max_steps=study.best_params['max_steps'],
-                                time_threshold=study.best_params['time_threshold'])
+                                 max_steps=study.best_params['max_steps'],
+                                 time_threshold=study.best_params['time_threshold'],
+                                 ALPHA=study.best_params['ALPHA'],
+                                 BETA=study.best_params['BETA'],
+                                 GAMMA=study.best_params['GAMMA'],
+                                 DELTA=study.best_params['DELTA'],
+                                 EPSILON=study.best_params['EPSILON'],
+                                 ZETA=study.best_params['ZETA'])
 
                 best_model = train_model(env, 
-                                        study.best_params['learning_rate'], 
-                                        study.best_params['batch_size'],
-                                        study.best_params['n_steps'],
-                                        study.best_params['gamma'],
-                                        study.best_params['gae_lambda'])
+                                         study.best_params['learning_rate'], 
+                                         study.best_params['batch_size'],
+                                         study.best_params['n_steps'],
+                                         study.best_params['gamma'],
+                                         study.best_params['gae_lambda'])
 
                 total_rewards = evaluate_model(best_model, env)
                 best_reward = save_best_model(best_model, study.best_params, total_rewards, best_reward)
 
-        study = optuna.create_study(direction='maximize')
-        study.optimize(objective, n_trials=100, callbacks=[callback])
+        pruner = MedianPruner(n_startup_trials=5, n_warmup_steps=30)
+        study = optuna.create_study(direction='maximize', pruner=pruner)
+        
+        with parallel_backend('threading', n_jobs=4):
+            study.optimize(objective, n_trials=100, callbacks=[callback])
 
         print('Number of finished trials:', len(study.trials))
         print('Best trial:')
@@ -124,13 +124,22 @@ def main(mode):
         for key, value in trial.params.items():
             print(f"{key}: {value}")
 
+        # Plotting feature importances
+        optuna.visualization.plot_param_importances(study)
+
     elif mode == "test":
         print("Loading and Evaluating the best model...")
         params = load_best_params()
         env = TradingEnv(time_penalty=params['time_penalty'],
                          max_steps=params['max_steps'],
-                         time_threshold=params['time_threshold'])
-        best_model = PPO.load("best_trader")  # Make sure the path is consistent
+                         time_threshold=params['time_threshold'],
+                         ALPHA=params['ALPHA'],
+                         BETA=params['BETA'],
+                         GAMMA=params['GAMMA'],
+                         DELTA=params['DELTA'],
+                         EPSILON=params['EPSILON'],
+                         ZETA=params['ZETA'])
+        best_model = PPO.load("best_trader")
         total_rewards = evaluate_model(best_model, env)
         print(f"Total rewards from the best model: {total_rewards}")
 
@@ -140,3 +149,5 @@ if __name__ == '__main__':
                         help='Mode to run the script in. Options are "train" or "test"')
     args = parser.parse_args()
     main(args.mode)
+
+

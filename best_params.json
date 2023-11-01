@@ -1,1 +1,1 @@
-{"time_penalty": -0.01, "max_steps": 71, "time_threshold": 7, "learning_rate": 0.007931347709857924, "batch_size": 512, "n_steps": 1147, "gamma": 0.9963891457817553, "gae_lambda": 0.9986198385025079}
+{"time_penalty": -0.05, "max_steps": 25, "time_threshold": 9, "ALPHA": 0.3070709654114404, "BETA": 0.19668644718582312, "GAMMA": 0.4650976163328333, "DELTA": 0.3705484244564956, "EPSILON": 0.02464761495122107, "ZETA": 0.1202620340618405, "learning_rate": 7.068195621999153e-05, "batch_size": 64, "n_steps": 1658, "gamma": 0.9220775836998355, "gae_lambda": 0.845808259275413}
