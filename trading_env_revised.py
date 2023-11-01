@@ -63,13 +63,14 @@ class TradingEnv(gym.Env):
     
     def calculate_reward(self, trade_profit_loss, existing_reward=0.0):
         reward = existing_reward
-        multiplier = 2 if trade_profit_loss > 0 else 1  # Default value
+        profit_multiplier = 2.0  # Encourage profit
+        loss_penalty = 1.5  # Discourage loss
+
         if trade_profit_loss > 0:
-            if trade_profit_loss >= 5.0:  # If the profit is 5% or more
-                multiplier = 4  # Increase the multiplier
-            reward += trade_profit_loss * multiplier
+            reward += trade_profit_loss * profit_multiplier
         else:
-            reward += trade_profit_loss  # No multiplier for loss
+            reward -= abs(trade_profit_loss) * loss_penalty
+
         return reward
 
     def step(self, action):
@@ -131,7 +132,7 @@ class TradingEnv(gym.Env):
         
         self.btc_balance += amount_to_buy
         self.zar_balance -= self.zar_balance / 100
-        stop_loss = current_close_price * 0.95  # 5% stop-loss
+        stop_loss = current_close_price * 0.99  # 5% stop-loss
         total_asset_at_order_time = self.total_asset_in_zar()
         self.open_orders.append({
             'type': 'long',

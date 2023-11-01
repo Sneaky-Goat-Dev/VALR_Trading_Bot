@@ -46,7 +46,7 @@ def evaluate_model(model, env):
         if done:
             obs = env.reset()
     
-    plot_rewards(rewards, total_steps)
+    # plot_rewards(rewards, total_steps)
     
     return total_rewards
 
@@ -68,11 +68,14 @@ def objective(trial):
     time_threshold = trial.suggest_int('time_threshold', 5, 20)
 
     # Hyperparameters for the PPO model
-    learning_rate = trial.suggest_loguniform('learning_rate', 1e-5, 1e-2)
-    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128])
+    learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-2, log=True)
+    batch_size = trial.suggest_categorical('batch_size', [8, 16, 32, 64, 128, 256, 512, 223])  # Add 223 to the list
     n_steps = trial.suggest_int('n_steps', 128, 2048)
-    gamma = trial.suggest_uniform('gamma', 0.9, 0.9999)
-    gae_lambda = trial.suggest_uniform('gae_lambda', 0.8, 1.0)
+
+    # Ensure n_steps is divisible by batch_size
+    n_steps = (n_steps // batch_size) * batch_size
+    gamma = trial.suggest_float('gamma', 0.9, 0.9999)
+    gae_lambda = trial.suggest_float('gae_lambda', 0.8, 1.0)
     
     env = TradingEnv(time_penalty=time_penalty, max_steps=max_steps, time_threshold=time_threshold)
     
