@@ -43,6 +43,8 @@ class TradingEnv(gym.Env):
         self.time_penalty = time_penalty
         self.time_threshold = time_threshold  
         self.open_orders = []
+        self.closing_prices = []  # List to store closing prices
+        self.trades = []  # List to store trades
         
         
         self.action_space = spaces.Discrete(3)  # 0: Hold, 1: Open Long, 2: Close Long
@@ -112,6 +114,16 @@ class TradingEnv(gym.Env):
         current_data = self.data.iloc[self.current_step]
         current_close_price = float(current_data['closing_price'])
         current_market_trend = current_data['market_trend']
+        
+        
+        self.closing_prices.append(current_close_price)
+        if action in [1, 2]:  # 1: Open Short, 2: Close Short
+            trade = {
+                'step': self.current_step,
+                'price': current_close_price,
+                'action': action
+            }
+            self.trades.append(trade)
         
 
         # Execute the action
@@ -257,6 +269,10 @@ class TradingEnv(gym.Env):
         current_close_price = float(self.data.iloc[self.current_step]['closing_price'])
         zar_in_btc = self.zar_balance / current_close_price
         return self.btc_balance + zar_in_btc
+    
+    
+    def calculate_min_max_closing_prices(self):
+        return self.data['closing_price'].min(), self.data['closing_price'].max()
     
     
     def log_metrics(self, episode, total_reward):
